@@ -1,24 +1,33 @@
+# Provides access to operating system functionality
 import os
+# For type hinting: Any type and dictionary
 from typing import Any, Dict
 
+# For numerical operations (not used directly in this snippet)
 import numpy as np
+# Import different player types from poke_env for battle strategies
 from poke_env import MaxBasePowerPlayer, RandomPlayer, SimpleHeuristicsPlayer
+# AbstractBattle class for type hinting and battle logic
 from poke_env.battle import AbstractBattle
+# Wrapper for single-agent environments
 from poke_env.environment.single_agent_wrapper import SingleAgentWrapper
+# Base player class from poke_env
 from poke_env.player.player import Player
 
+# Import the base environment for Showdown from local module
 from showdown_gym.base_environment import BaseShowdownEnv
 
-
+# Main environment class for Pokémon Showdown RL tasks
 class ShowdownEnvironment(BaseShowdownEnv):
 
     def __init__(
         self,
-        battle_format: str = "gen9randombattle",
-        account_name_one: str = "train_one",
-        account_name_two: str = "train_two",
-        team: str | None = None,
+        battle_format: str = "gen9randombattle",  # Format of the battle (e.g., Gen 9 random battle)
+        account_name_one: str = "train_one",      # Name for the first account (agent)
+        account_name_two: str = "train_two",      # Name for the second account (opponent)
+        team: str | None = None,                   # Optional team string (if not random)
     ):
+        # Initialize the base environment with the provided settings
         super().__init__(
             battle_format=battle_format,
             account_name_one=account_name_one,
@@ -27,16 +36,18 @@ class ShowdownEnvironment(BaseShowdownEnv):
         )
 
     def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
+        # Get the base info dictionary from the parent class
         info = super().get_additional_info()
 
         # Add any additional information you want to include in the info dictionary that is saved in logs
         # For example, you can add the win status
 
+        # If a battle has occurred, record whether the agent won
         if self.battle1 is not None:
-            agent = self.possible_agents[0]
-            info[agent]["win"] = self.battle1.won
+            agent = self.possible_agents[0]  # Get the agent's name
+            info[agent]["win"] = self.battle1.won  # Store win status (True/False)
 
-        return info
+        return info  # Return the info dictionary with any additional info
 
     def calc_reward(self, battle: AbstractBattle) -> float:
         """
