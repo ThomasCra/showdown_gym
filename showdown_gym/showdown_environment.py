@@ -47,6 +47,26 @@ class ShowdownEnvironment(BaseShowdownEnv):
             agent = self.possible_agents[0]  # Get the agent's name
             info[agent]["win"] = self.battle1.won  # Store win status (True/False)
 
+            # --- Additional Pokémon Showdown info for reward engineering ---
+            battle = self.battle1
+
+            # Damage dealt to opponent (sum of max_hp - current_hp for all opponent Pokémon)
+            info[agent]["damage_dealt"] = float(
+                sum([mon.max_hp - mon.current_hp for mon in battle.opponent_team.values() if mon.max_hp is not None and mon.current_hp is not None])
+            )
+
+            # Damage taken by agent (sum of max_hp - current_hp for all agent Pokémon)
+            info[agent]["damage_taken"] = float(
+                sum([mon.max_hp - mon.current_hp for mon in battle.team.values() if mon.max_hp is not None and mon.current_hp is not None])
+            )
+
+            # Turns for the battle
+            info[agent]["turns"] = battle.turn
+
+            # Number of Pokémon left over (not fainted) for agent and opponent
+            info[agent]["pokemon_left"] = sum([not mon.fainted for mon in battle.team.values()])
+            info[agent]["opponent_pokemon_left"] = sum([not mon.fainted for mon in battle.opponent_team.values()])
+
         return info  # Return the info dictionary with any additional info
 
     def calc_reward(self, battle: AbstractBattle) -> float:
