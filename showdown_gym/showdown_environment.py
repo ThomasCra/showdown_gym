@@ -51,14 +51,10 @@ class ShowdownEnvironment(BaseShowdownEnv):
             battle = self.battle1
 
             # Damage dealt to opponent (sum of max_hp - current_hp for all opponent Pokémon)
-            info[agent]["damage_dealt"] = float(
-                sum([mon.max_hp - mon.current_hp for mon in battle.opponent_team.values() if mon.max_hp is not None and mon.current_hp is not None])
-            )
+            info[agent]["damage_dealt"] = float(sum([mon.max_hp - mon.current_hp for mon in battle.opponent_team.values() if mon.max_hp is not None and mon.current_hp is not None]))
 
             # Damage taken by agent (sum of max_hp - current_hp for all agent Pokémon)
-            info[agent]["damage_taken"] = float(
-                sum([mon.max_hp - mon.current_hp for mon in battle.team.values() if mon.max_hp is not None and mon.current_hp is not None])
-            )
+            info[agent]["damage_taken"] = float(sum([mon.max_hp - mon.current_hp for mon in battle.team.values() if mon.max_hp is not None and mon.current_hp is not None]))
 
             # Turns for the battle
             info[agent]["turns"] = battle.turn
@@ -114,6 +110,26 @@ class ShowdownEnvironment(BaseShowdownEnv):
 
         # Reward for reducing the opponent's health
         reward += np.sum(diff_health_opponent)
+
+        # Fainting bonus: +2 for each opponent Pokémon fainted since last step
+        prior_fainted_opponent = 0
+        if prior_battle is not None:
+            prior_fainted_opponent = sum([mon.fainted for mon in prior_battle.opponent_team.values()])
+        current_fainted_opponent = sum([mon.fainted for mon in battle.opponent_team.values()])
+        fainted_diff = current_fainted_opponent - prior_fainted_opponent
+        reward += 2.0 * fainted_diff
+
+        # Survival bonus: +1 for each of agent's Pokémon still alive at the end of the battle
+        if battle.finished:
+            agent_alive = sum([not mon.fainted for mon in battle.team.values()])
+            reward += 1.0 * agent_alive
+
+        # Win/loss bonus: +10 for win, -10 for loss (only at end of battle)
+        if battle.finished:
+            if battle.won:
+                reward += 10.0
+            else:
+                reward -= 10.0
 
         return reward
 
