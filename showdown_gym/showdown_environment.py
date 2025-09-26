@@ -1,12 +1,19 @@
 # Provides access to operating system functionality
 import os
+
+import time
 # For type hinting: Any type and dictionary
 from typing import Any, Dict
 
 # For numerical operations (not used directly in this snippet)
 import numpy as np
 # Import different player types from poke_env for battle strategies
-from poke_env import MaxBasePowerPlayer, RandomPlayer, SimpleHeuristicsPlayer
+from poke_env import (
+    AccountConfiguration,
+    MaxBasePowerPlayer,
+    RandomPlayer,
+    SimpleHeuristicsPlayer,
+)
 # AbstractBattle class for type hinting and battle logic
 from poke_env.battle import AbstractBattle
 # Wrapper for single-agent environments
@@ -218,27 +225,35 @@ class SingleShowdownWrapper(SingleAgentWrapper):
         evaluation: bool = False,
     ):
         opponent: Player
+        unique_id = time.strftime("%H%M%S")
+
+        opponent_account = "ot" if not evaluation else "oe"
+        opponent_account = f"{opponent_account}_{unique_id}"
+
+        opponent_configuration = AccountConfiguration(opponent_account, None)
         if opponent_type == "simple":
-            opponent = SimpleHeuristicsPlayer()
+            opponent = SimpleHeuristicsPlayer(
+                account_configuration=opponent_configuration
+            )
         elif opponent_type == "max":
-            opponent = MaxBasePowerPlayer()
+            opponent = MaxBasePowerPlayer(account_configuration=opponent_configuration)
         elif opponent_type == "random":
-            opponent = RandomPlayer()
+            opponent = RandomPlayer(account_configuration=opponent_configuration)
         else:
             raise ValueError(f"Unknown opponent type: {opponent_type}")
 
-        account_name_one: str = "train_one" if not evaluation else "eval_one"
-        account_name_two: str = "train_two" if not evaluation else "eval_two"
+        account_name_one: str = "t1" if not evaluation else "e1"
+        account_name_two: str = "t2" if not evaluation else "e2"
 
-        account_name_one = f"{account_name_one}_{opponent_type}"
-        account_name_two = f"{account_name_two}_{opponent_type}"
+        account_name_one = f"{account_name_one}_{unique_id}"
+        account_name_two = f"{account_name_two}_{unique_id}"
 
         team = self._load_team(team_type)
 
-        battle_fomat = "gen9randombattle" if team is None else "gen9ubers"
+        battle_format = "gen9randombattle" if team is None else "gen9ubers"
 
         primary_env = ShowdownEnvironment(
-            battle_format=battle_fomat,
+            battle_format=battle_format,
             account_name_one=account_name_one,
             account_name_two=account_name_two,
             team=team,
