@@ -4,7 +4,6 @@ from typing import Any, Dict
 
 import numpy as np
 from gymnasium.spaces import Box, Discrete
-from gymnasium.spaces import Box
 from poke_env import AccountConfiguration
 from poke_env.battle import AbstractBattle
 from poke_env.environment.singles_env import ObsType, SinglesEnv
@@ -68,7 +67,7 @@ class BaseShowdownEnv(SinglesEnv):
         self._prior_battle_two = copy.deepcopy(self.battle2)
 
         return response
-    
+
     def process_action(self, action: np.int64) -> np.int64:
         return action
 
@@ -118,7 +117,7 @@ class BaseShowdownEnv(SinglesEnv):
         raise NotImplementedError(
             "This method should be implemented in subclasses to define the observation spaces."
         )
-    
+
     def _get_action_size(self) -> int | None:
         raise NotImplementedError(
             "This method should be implemented in subclasses to define the action spaces."

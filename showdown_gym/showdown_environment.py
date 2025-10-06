@@ -1,42 +1,31 @@
-# Provides access to operating system functionality
 import os
-
 import time
-# For type hinting: Any type and dictionary
 from typing import Any, Dict
 
-# For numerical operations (not used directly in this snippet)
 import numpy as np
-# Import different player types from poke_env for battle strategies
 from poke_env import (
     AccountConfiguration,
     MaxBasePowerPlayer,
     RandomPlayer,
     SimpleHeuristicsPlayer,
 )
-# AbstractBattle class for type hinting and battle logic
 from poke_env.battle import AbstractBattle
-# Wrapper for single-agent environments
 from poke_env.environment.single_agent_wrapper import SingleAgentWrapper
-
 from poke_env.environment.singles_env import ObsType
-# Base player class from poke_env
 from poke_env.player.player import Player
 
-# Import the base environment for Showdown from local module
 from showdown_gym.base_environment import BaseShowdownEnv
 
-# Main environment class for Pokémon Showdown RL tasks
+
 class ShowdownEnvironment(BaseShowdownEnv):
 
     def __init__(
         self,
-        battle_format: str = "gen9randombattle",  # Format of the battle (e.g., Gen 9 random battle)
-        account_name_one: str = "train_one",      # Name for the first account (agent)
-        account_name_two: str = "train_two",      # Name for the second account (opponent)
-        team: str | None = None,                   # Optional team string (if not random)
+        battle_format: str = "gen9randombattle",
+        account_name_one: str = "train_one",
+        account_name_two: str = "train_two",
+        team: str | None = None,
     ):
-        # Initialize the base environment with the provided settings
         super().__init__(
             battle_format=battle_format,
             account_name_one=account_name_one,
@@ -49,7 +38,9 @@ class ShowdownEnvironment(BaseShowdownEnv):
     def _get_action_size(self) -> int | None:
         """
         None just uses the default number of actions as laid out in process_action - 26 actions.
+
         This defines the size of the action space for the agent - e.g. the output of the RL agent.
+
         This should return the number of actions you wish to use if not using the default action scheme.
         """
         return None  # Return None if action size is default
@@ -57,6 +48,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
     def process_action(self, action: np.int64) -> np.int64:
         """
         Returns the np.int64 relative to the given action.
+
         The action mapping is as follows:
         action = -2: default
         action = -1: forfeit
@@ -66,42 +58,26 @@ class ShowdownEnvironment(BaseShowdownEnv):
         14 <= action <= 17: move and z-move
         18 <= action <= 21: move and dynamax
         22 <= action <= 25: move and terastallize
+
         :param action: The action to take.
         :type action: int64
+
         :return: The battle order ID for the given action in context of the current battle.
         :rtype: np.Int64
         """
         return action
 
     def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
-        # Get the base info dictionary from the parent class
         info = super().get_additional_info()
 
         # Add any additional information you want to include in the info dictionary that is saved in logs
         # For example, you can add the win status
 
-        # If a battle has occurred, record whether the agent won
         if self.battle1 is not None:
-            agent = self.possible_agents[0]  # Get the agent's name
-            info[agent]["win"] = self.battle1.won  # Store win status (True/False)
+            agent = self.possible_agents[0]
+            info[agent]["win"] = self.battle1.won
 
-            # --- Additional Pokémon Showdown info for reward engineering ---
-            battle = self.battle1
-
-            # Damage dealt to opponent (sum of max_hp - current_hp for all opponent Pokémon)
-            info[agent]["damage_dealt"] = float(sum([mon.max_hp - mon.current_hp for mon in battle.opponent_team.values() if mon.max_hp is not None and mon.current_hp is not None]))
-
-            # Damage taken by agent (sum of max_hp - current_hp for all agent Pokémon)
-            info[agent]["damage_taken"] = float(sum([mon.max_hp - mon.current_hp for mon in battle.team.values() if mon.max_hp is not None and mon.current_hp is not None]))
-
-            # Turns for the battle
-            info[agent]["turns"] = battle.turn
-
-            # Number of Pokémon left over (not fainted) for agent and opponent
-            info[agent]["pokemon_left"] = sum([not mon.fainted for mon in battle.team.values()])
-            info[agent]["opponent_pokemon_left"] = sum([not mon.fainted for mon in battle.opponent_team.values()])
-
-        return info  # Return the info dictionary with any additional info
+        return info
 
     def calc_reward(self, battle: AbstractBattle) -> float:
         """
@@ -148,26 +124,6 @@ class ShowdownEnvironment(BaseShowdownEnv):
 
         # Reward for reducing the opponent's health
         reward += np.sum(diff_health_opponent)
-
-        # # Fainting bonus: +2 for each opponent Pokémon fainted since last step
-        prior_fainted_opponent = 0
-        if prior_battle is not None:
-            prior_fainted_opponent = sum([mon.fainted for mon in prior_battle.opponent_team.values()])
-        current_fainted_opponent = sum([mon.fainted for mon in battle.opponent_team.values()])
-        fainted_diff = current_fainted_opponent - prior_fainted_opponent
-        reward += 2.0 * fainted_diff
-
-        # Survival bonus: +1 for each of agent's Pokémon still alive at the end of the battle
-        if battle.finished:
-            agent_alive = sum([not mon.fainted for mon in battle.team.values()])
-            reward += 1.0 * agent_alive
-
-        # Win/loss bonus: +5 for win, -5 for loss (only at end of battle)
-        # if battle.finished:
-        #     if battle.won:
-        #         reward += 5.0
-        #     else:
-        #         reward -= 5.0
 
         return reward
 
