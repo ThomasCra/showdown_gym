@@ -18,6 +18,8 @@ from poke_env import (
 from poke_env.battle import AbstractBattle
 # Wrapper for single-agent environments
 from poke_env.environment.single_agent_wrapper import SingleAgentWrapper
+
+from poke_env.environment.singles_env import ObsType
 # Base player class from poke_env
 from poke_env.player.player import Player
 
@@ -41,6 +43,35 @@ class ShowdownEnvironment(BaseShowdownEnv):
             account_name_two=account_name_two,
             team=team,
         )
+
+        self.rl_agent = account_name_one
+
+    def _get_action_size(self) -> int | None:
+        """
+        None just uses the default number of actions as laid out in process_action - 26 actions.
+        This defines the size of the action space for the agent - e.g. the output of the RL agent.
+        This should return the number of actions you wish to use if not using the default action scheme.
+        """
+        return None  # Return None if action size is default
+
+    def process_action(self, action: np.int64) -> np.int64:
+        """
+        Returns the np.int64 relative to the given action.
+        The action mapping is as follows:
+        action = -2: default
+        action = -1: forfeit
+        0 <= action <= 5: switch
+        6 <= action <= 9: move
+        10 <= action <= 13: move and mega evolve
+        14 <= action <= 17: move and z-move
+        18 <= action <= 21: move and dynamax
+        22 <= action <= 25: move and terastallize
+        :param action: The action to take.
+        :type action: int64
+        :return: The battle order ID for the given action in context of the current battle.
+        :rtype: np.Int64
+        """
+        return action
 
     def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
         # Get the base info dictionary from the parent class
@@ -118,7 +149,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
         # Reward for reducing the opponent's health
         reward += np.sum(diff_health_opponent)
 
-        # Fainting bonus: +2 for each opponent Pokémon fainted since last step
+        # # Fainting bonus: +2 for each opponent Pokémon fainted since last step
         prior_fainted_opponent = 0
         if prior_battle is not None:
             prior_fainted_opponent = sum([mon.fainted for mon in prior_battle.opponent_team.values()])
@@ -131,12 +162,12 @@ class ShowdownEnvironment(BaseShowdownEnv):
             agent_alive = sum([not mon.fainted for mon in battle.team.values()])
             reward += 1.0 * agent_alive
 
-        # Win/loss bonus: +10 for win, -10 for loss (only at end of battle)
-        if battle.finished:
-            if battle.won:
-                reward += 10.0
-            else:
-                reward -= 10.0
+        # Win/loss bonus: +5 for win, -5 for loss (only at end of battle)
+        # if battle.finished:
+        #     if battle.won:
+        #         reward += 5.0
+        #     else:
+        #         reward -= 5.0
 
         return reward
 

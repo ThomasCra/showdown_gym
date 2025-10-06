@@ -3,6 +3,7 @@ import logging
 from typing import Any, Dict
 
 import numpy as np
+from gymnasium.spaces import Box, Discrete
 from gymnasium.spaces import Box
 from poke_env import AccountConfiguration
 from poke_env.battle import AbstractBattle
@@ -46,6 +47,10 @@ class BaseShowdownEnv(SinglesEnv):
             for agent in self.possible_agents
         }
 
+        act_size = self._get_action_size()
+        if act_size is not None:
+            self.action_spaces[self.possible_agents[0]] = Discrete(act_size)
+
         self.n = 1
 
         self._prior_battle_one: AbstractBattle  # type: ignore
@@ -63,6 +68,9 @@ class BaseShowdownEnv(SinglesEnv):
         self._prior_battle_two = copy.deepcopy(self.battle2)
 
         return response
+    
+    def process_action(self, action: np.int64) -> np.int64:
+        return action
 
     def step(self, actions: dict[str, np.int64]) -> tuple[
         dict[str, ObsType],
@@ -74,6 +82,8 @@ class BaseShowdownEnv(SinglesEnv):
         self.n += 1
         self._prior_battle_one = copy.deepcopy(self.battle1)  # type: ignore
         self._prior_battle_two = copy.deepcopy(self.battle2)  # type: ignore
+
+        actions[self.agents[0]] = self.process_action(actions[self.agents[0]])
 
         return super().step(actions)
 
@@ -107,4 +117,9 @@ class BaseShowdownEnv(SinglesEnv):
     def _observation_size(self) -> int:
         raise NotImplementedError(
             "This method should be implemented in subclasses to define the observation spaces."
+        )
+    
+    def _get_action_size(self) -> int | None:
+        raise NotImplementedError(
+            "This method should be implemented in subclasses to define the action spaces."
         )
