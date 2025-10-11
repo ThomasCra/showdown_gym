@@ -25,6 +25,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
         account_name_one: str = "train_one",
         account_name_two: str = "train_two",
         team: str | None = None,
+        imitation_agent_type: str = "simple",  # "simple", "max", or "random"
     ):
         super().__init__(
             battle_format=battle_format,
@@ -34,6 +35,10 @@ class ShowdownEnvironment(BaseShowdownEnv):
         )
 
         self.rl_agent = account_name_one
+        self.imitation_agent_type = imitation_agent_type
+        
+        # Store the last action taken by our RL agent for reward calculation
+        self.last_rl_action = None
 
     def _get_action_size(self) -> int | None:
         """
@@ -65,90 +70,133 @@ class ShowdownEnvironment(BaseShowdownEnv):
         :return: The battle order ID for the given action in context of the current battle.
         :rtype: np.Int64
         """
+        # Store the action for imitation learning reward calculation
+        self.last_rl_action = action
         return action
 
     def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
         info = super().get_additional_info()
 
-        # Add any additional information you want to include in the info dictionary that is saved in logs
-        # For example, you can add the win status
-
+        # Add imitation learning specific information for tracking
         if self.battle1 is not None:
             agent = self.possible_agents[0]
             info[agent]["win"] = self.battle1.won
+            info[agent]["imitation_agent_type"] = self.imitation_agent_type
+            
+            # Track if the last action matched the reference agent
+            if hasattr(self, 'last_rl_action') and self.last_rl_action is not None:
+                reference_action = self._get_reference_action(self.battle1)
+                info[agent]["action_match"] = (
+                    self.last_rl_action == reference_action 
+                    if reference_action is not None else False
+                )
+                info[agent]["last_rl_action"] = int(self.last_rl_action)
+                info[agent]["reference_action"] = int(reference_action) if reference_action is not None else -1
 
         return info
 
+    def _get_reference_action(self, battle: AbstractBattle) -> int | None:
+        """
+        Get what action the reference imitation agent would take in this battle state.
+        
+        Args:
+            battle: The current battle state
+        Returns:
+            The action the reference agent would choose, or None if unable to determine
+        """
+        if not hasattr(battle, 'available_moves') or not hasattr(battle, 'available_switches'):
+            return None
+            
+        try:
+            # Create a temporary reference player to get its action choice
+            if self.imitation_agent_type == "simple":
+                # SimpleHeuristicsPlayer: prefers high damage moves
+                if battle.available_moves:
+                    # Choose the move with highest base power
+                    best_move = max(battle.available_moves, 
+                                   key=lambda move: move.base_power if move.base_power else 0)
+                    # Convert to action index (moves start at index 6)
+                    return 6 + list(battle.available_moves).index(best_move)
+                elif battle.available_switches:
+                    # Switch to first available Pokemon (switches are indices 0-5)
+                    return list(battle.available_switches).index(battle.available_switches[0])
+                    
+            elif self.imitation_agent_type == "max":
+                # MaxBasePowerPlayer: always chooses highest base power move
+                if battle.available_moves:
+                    best_move = max(battle.available_moves, 
+                                   key=lambda move: move.base_power if move.base_power else 0)
+                    return 6 + list(battle.available_moves).index(best_move)
+                elif battle.available_switches:
+                    return list(battle.available_switches).index(battle.available_switches[0])
+                    
+            elif self.imitation_agent_type == "random":
+                # For random, we'll just return a random valid action
+                all_actions = []
+                if battle.available_moves:
+                    all_actions.extend([6 + i for i in range(len(battle.available_moves))])
+                if battle.available_switches:
+                    all_actions.extend([i for i in range(len(battle.available_switches))])
+                if all_actions:
+                    return np.random.choice(all_actions)
+                    
+        except Exception:
+            # If anything goes wrong, return None
+            pass
+            
+        return None
+
     def calc_reward(self, battle: AbstractBattle) -> float:
         """
-        Calculates the reward based on the changes in state of the battle.
-
-        You need to implement this method to define how the reward is calculated
+        Imitation Learning Reward: Agent gets positive reward for choosing the same
+        action as the reference agent, negative reward for different actions.
 
         Args:
-            battle (AbstractBattle): The current battle instance containing information
-                about the player's team and the opponent's team from the player's perspective.
-            prior_battle (AbstractBattle): The prior battle instance to compare against.
+            battle (AbstractBattle): The current battle instance
         Returns:
-            float: The calculated reward based on the change in state of the battle.
+            float: The calculated reward based on action similarity to reference agent
         """
-
-        prior_battle = self._get_prior_battle(battle)
-
         reward = 0.0
-
-        health_team = [mon.current_hp_fraction for mon in battle.team.values()]
-        health_opponent = [
-            mon.current_hp_fraction for mon in battle.opponent_team.values()
-        ]
-
-        # If the opponent has less than 6 Pokémon, fill the missing values with 1.0 (fraction of health)
-        if len(health_opponent) < len(health_team):
-            health_opponent.extend([1.0] * (len(health_team) - len(health_opponent)))
-
-        prior_health_opponent = []
-        if prior_battle is not None:
-            prior_health_opponent = [
-                mon.current_hp_fraction for mon in prior_battle.opponent_team.values()
-            ]
-
-        # Ensure health_opponent has 6 components, filling missing values with 1.0 (fraction of health)
-        if len(prior_health_opponent) < len(health_team):
-            prior_health_opponent.extend(
-                [1.0] * (len(health_team) - len(prior_health_opponent))
-            )
-
-        diff_health_opponent = np.array(prior_health_opponent) - np.array(
-            health_opponent
-        )
-
-        # Reward for reducing the opponent's health
-        reward += np.sum(diff_health_opponent)
-
+        
+        # Only calculate imitation reward if we have stored the agent's last action
+        if self.last_rl_action is not None:
+            reference_action = self._get_reference_action(battle)
+            
+            if reference_action is not None:
+                # Give positive reward for matching the reference agent's choice
+                if self.last_rl_action == reference_action:
+                    reward += 1.0  # Match reward
+                else:
+                    reward -= 0.1  # Mismatch penalty (smaller to encourage exploration)
+        
+        # Optional: Add small battle outcome rewards to provide additional guidance
+        if battle.finished:
+            if battle.won:
+                reward += 0.5  # Small win bonus
+            else:
+                reward -= 0.5  # Small loss penalty
+        
         return reward
 
     def _observation_size(self) -> int:
         """
         Returns the size of the observation size to create the observation space for all possible agents in the environment.
 
-        You need to set obvervation size to the number of features you want to include in the observation.
-        Annoyingly, you need to set this manually based on the features you want to include in the observation from emded_battle.
-
+        For imitation learning, we keep it simple with just health information.
+        
         Returns:
             int: The size of the observation space.
         """
-
-        # Simply change this number to the number of features you want to include in the observation from embed_battle.
-        # If you find a way to automate this, please let me know!
+        # 6 for team health + 6 for opponent health = 12 total features
         return 12
 
     def embed_battle(self, battle: AbstractBattle) -> np.ndarray:
         """
         Embeds the current state of a Pokémon battle into a numerical vector representation.
-        This method generates a feature vector that represents the current state of the battle,
-        this is used by the agent to make decisions.
-
-        You need to implement this method to define how the battle state is represented.
+        
+        For imitation learning, we keep the state representation simple to speed up training.
+        Only health information is used, which is sufficient for the agent to learn basic
+        battle patterns from the reference agent.
 
         Args:
             battle (AbstractBattle): The current battle instance containing information about
@@ -166,17 +214,10 @@ class ShowdownEnvironment(BaseShowdownEnv):
         if len(health_opponent) < len(health_team):
             health_opponent.extend([1.0] * (len(health_team) - len(health_opponent)))
 
-        #########################################################################################################
-        # Caluclate the length of the final_vector and make sure to update the value in _observation_size above #
-        #########################################################################################################
-
-        # Final vector - single array with health of both teams
-        final_vector = np.concatenate(
-            [
-                health_team,  # N components for the health of each pokemon
-                health_opponent,  # N components for the health of opponent pokemon
-            ]
-        )
+        # Simple 12-dimensional observation: 6 team health + 6 opponent health
+        # This minimal state representation enables faster training while still
+        # providing essential information for the imitation learning agent
+        final_vector = np.concatenate([health_team, health_opponent])
 
         return final_vector
 
@@ -210,6 +251,7 @@ class SingleShowdownWrapper(SingleAgentWrapper):
         team_type: str = "random",
         opponent_type: str = "random",
         evaluation: bool = False,
+        imitation_agent_type: str = "simple",  # Agent to imitate: "simple", "max", or "random"
     ):
         opponent: Player
         unique_id = time.strftime("%H%M%S")
@@ -244,6 +286,7 @@ class SingleShowdownWrapper(SingleAgentWrapper):
             account_name_one=account_name_one,
             account_name_two=account_name_two,
             team=team,
+            imitation_agent_type=imitation_agent_type,
         )
 
         super().__init__(env=primary_env, opponent=opponent)
