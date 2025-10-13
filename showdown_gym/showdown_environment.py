@@ -3,6 +3,7 @@ import time
 from typing import Any, Dict
 
 import numpy as np
+from gymnasium.spaces import Box
 from poke_env import (
     AccountConfiguration,
     MaxBasePowerPlayer,
@@ -18,6 +19,14 @@ from showdown_gym.base_environment import BaseShowdownEnv
 
 
 class ShowdownEnvironment(BaseShowdownEnv):
+    """
+    Gen9 Reinforcement Learning Environment using Gymnasium wrapper.
+    
+    This environment implements a simple RL player with:
+    - Observation space: move base powers, damage multipliers, and team status
+    - Reward function: based on fainted pokemon, hp values, and victory
+    - Action space: moves only (no switching except when forced)
+    """
 
     def __init__(
         self,
@@ -37,8 +46,23 @@ class ShowdownEnvironment(BaseShowdownEnv):
         self.rl_agent = account_name_one
         self.imitation_agent_type = imitation_agent_type
         
-        # Store the last action taken by our RL agent for reward calculation
-        self.last_rl_action = None
+        # Initialize observation space following the example structure
+        # Observation vector contains:
+        # - 4 values for move base powers (normalized)
+        # - 4 values for move damage multipliers
+        # - 1 value for fainted team pokemon ratio
+        # - 1 value for fainted opponent pokemon ratio
+        # Total: 10 components
+        low = [-1, -1, -1, -1, 0, 0, 0, 0, 0, 0]
+        high = [3, 3, 3, 3, 4, 4, 4, 4, 1, 1]
+        self.observation_spaces = {
+            agent: Box(
+                np.array(low, dtype=np.float32),
+                np.array(high, dtype=np.float32),
+                dtype=np.float32,
+            )
+            for agent in self.possible_agents
+        }
 
     def _get_action_size(self) -> int | None:
         """
@@ -76,9 +100,6 @@ class ShowdownEnvironment(BaseShowdownEnv):
         :return: The battle order ID for the given action in context of the current battle.
         :rtype: np.Int64
         """
-        # Store the action for imitation learning reward calculation
-        self.last_rl_action = action
-        
         # Check if current Pokemon is fainted and we need to make a forced switch
         if hasattr(self, 'battle1') and self.battle1 is not None:
             battle = self.battle1
@@ -110,118 +131,67 @@ class ShowdownEnvironment(BaseShowdownEnv):
     def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
         info = super().get_additional_info()
 
-        # Add imitation learning specific information for tracking
+        # Add training specific information for tracking
         if self.battle1 is not None:
             agent = self.possible_agents[0]
             info[agent]["win"] = self.battle1.won
-            info[agent]["imitation_agent_type"] = self.imitation_agent_type
+            info[agent]["turn"] = self.battle1.turn
             
-            # Track if the last action matched the reference agent
-            if hasattr(self, 'last_rl_action') and self.last_rl_action is not None:
-                reference_action = self._get_reference_action(self.battle1)
-                info[agent]["action_match"] = (
-                    self.last_rl_action == reference_action 
-                    if reference_action is not None else False
-                )
-                info[agent]["last_rl_action"] = int(self.last_rl_action)
-                info[agent]["reference_action"] = int(reference_action) if reference_action is not None else -1
+            # Track battle statistics
+            if hasattr(self.battle1, 'team'):
+                fainted_team = len([mon for mon in self.battle1.team.values() if mon.fainted])
+                info[agent]["fainted_team"] = fainted_team
+            
+            if hasattr(self.battle1, 'opponent_team'):
+                fainted_opponent = len([mon for mon in self.battle1.opponent_team.values() if mon.fainted])
+                info[agent]["fainted_opponent"] = fainted_opponent
 
         return info
 
-    def _get_reference_action(self, battle: AbstractBattle) -> int | None:
-        """
-        Get what action the reference imitation agent would take in this battle state.
-        Modified to only use attacking moves, following the same constraints as the RL agent.
-        
-        Args:
-            battle: The current battle state
-        Returns:
-            The action the reference agent would choose, or None if unable to determine
-        """
-        if not hasattr(battle, 'available_moves'):
-            return None
-            
-        try:
-            # Only consider attacking moves - no switching allowed except when forced
-            if battle.available_moves:
-                if self.imitation_agent_type == "simple" or self.imitation_agent_type == "max":
-                    # Both SimpleHeuristicsPlayer and MaxBasePowerPlayer prefer highest base power
-                    best_move = max(battle.available_moves, 
-                                   key=lambda move: move.base_power if move.base_power else 0)
-                    # Convert to our new action mapping (0-3 for regular moves)
-                    move_index = list(battle.available_moves).index(best_move)
-                    return min(move_index, 3)  # Limit to first 4 moves (0-3)
-                    
-                elif self.imitation_agent_type == "random":
-                    # For random, choose from available attacking moves only
-                    num_moves = min(len(battle.available_moves), 4)  # Max 4 moves
-                    return np.random.randint(0, num_moves) if num_moves > 0 else 0
-            else:
-                # No moves available, return default action
-                return 0
-                    
-        except Exception:
-            # If anything goes wrong, return default move
-            return 0
-            
-        return 0
-
     def calc_reward(self, battle: AbstractBattle) -> float:
         """
-        Imitation Learning Reward: Agent gets positive reward for choosing the same
-        action as the reference agent, negative reward for different actions.
-
+        Calculate reward based on battle state following the example structure.
+        
+        Reward structure:
+        - Winning: +30 points
+        - Making opponent pokemon faint: +2 points per pokemon
+        - Opponent losing HP: +1 point per % hp lost
+        - Conversely, negative actions lead to symmetrically negative rewards
+        
         Args:
             battle (AbstractBattle): The current battle instance
         Returns:
-            float: The calculated reward based on action similarity to reference agent
+            float: The calculated reward
         """
-        reward = 0.0
-        
-        # Only calculate imitation reward if we have stored the agent's last action
-        if self.last_rl_action is not None:
-            reference_action = self._get_reference_action(battle)
-            
-            if reference_action is not None:
-                # Give positive reward for matching the reference agent's choice
-                if self.last_rl_action == reference_action:
-                    reward += 0.5  # Match reward
-                else:
-                    reward -= 0.1  # Mismatch penalty (smaller to encourage exploration)`
-                    
-        # Add battle outcome rewards normalized by battle length (turn count)
-        if battle.finished:
-            # Get current turn count, ensure it's at least 1 to avoid division by zero
-            turn_count = max(battle.turn, 1)
-            
-            if battle.won:
-                reward += 10 / turn_count  # Win bonus normalized by turns
-            else:
-                reward -= 0.5 * turn_count  # Loss penalty normalized by turns
-        
-        return reward
+        return self.reward_computing_helper(
+            battle, fainted_value=2.0, hp_value=1.0, victory_value=30.0
+        )
 
     def _observation_size(self) -> int:
         """
         Returns the size of the observation size to create the observation space for all possible agents in the environment.
 
-        Enhanced observation space includes:
-        - Team health (6) + Opponent health (6) = 12
-        - Active Pokemon type effectiveness (18 types) = 18  
-        - Turn count (1) = 1
+        Following the example structure:
+        - 4 move base powers
+        - 4 move damage multipliers
+        - 1 fainted team ratio
+        - 1 fainted opponent ratio
         
         Returns:
-            int: The size of the observation space (31 total features).
+            int: The size of the observation space (10 total features).
         """
-        # Total: 12 + 18 + 1 = 31 features
-        return 31
+        return 10
 
     def embed_battle(self, battle: AbstractBattle) -> np.ndarray:
         """
-        Embeds the current state of a Pokémon battle into a numerical vector representation.
+        Embeds the current state of a Pokémon battle into a numerical vector representation
+        following the example structure.
         
-        Enhanced state representation includes health, type effectiveness, turn count,
-        field conditions, and Pokemon stats to provide richer information for learning.
+        Observation vector contains:
+        - Base power of each available move (normalized to 0-3 range, -1 if not available)
+        - Damage multiplier of each available move against current opponent (0-4 range)
+        - Number of non-fainted pokemon in our team (0-1 range)
+        - Number of non-fainted pokemon in opponent's team (0-1 range)
 
         Args:
             battle (AbstractBattle): The current battle instance containing information about
@@ -229,68 +199,40 @@ class ShowdownEnvironment(BaseShowdownEnv):
         Returns:
             np.float32: A 1D numpy array containing the state you want the agent to observe.
         """
-
-        # 1. Health information (12 features)
-        health_team = [mon.current_hp_fraction for mon in battle.team.values()]
-        health_opponent = [
-            mon.current_hp_fraction for mon in battle.opponent_team.values()
-        ]
-
-        # Ensure health_opponent has 6 components, filling missing values with 1.0
-        if len(health_opponent) < len(health_team):
-            health_opponent.extend([1.0] * (len(health_team) - len(health_opponent)))
-
-        # 2. Type effectiveness for active Pokemon (18 features - one for each type)
-        type_effectiveness = self._get_type_effectiveness(battle)
+        # -1 indicates that the move does not have a base power
+        # or is not available
+        moves_base_power = -np.ones(4)
+        moves_dmg_multiplier = np.ones(4)
         
-        # 3. Turn count (1 feature) - normalized by dividing by 100 to keep values reasonable
-        turn_count = [min(battle.turn / 100.0, 1.0)]
+        for i, move in enumerate(battle.available_moves):
+            moves_base_power[i] = (
+                move.base_power / 100
+            )  # Simple rescaling to facilitate learning
+            if move.type:
+                try:
+                    moves_dmg_multiplier[i] = move.type.damage_multiplier(
+                        battle.opponent_active_pokemon.type_1,
+                        battle.opponent_active_pokemon.type_2,
+                        type_chart=battle._format.type_chart if hasattr(battle, '_format') else None,
+                    )
+                except (AttributeError, TypeError):
+                    moves_dmg_multiplier[i] = 1.0
 
-        # Combine all features into final observation vector (31 total)
-        final_vector = np.concatenate([
-            health_team,           # 6 features
-            health_opponent,       # 6 features  
-            type_effectiveness,    # 18 features
-            turn_count            # 1 feature
-        ])
+        # We count how many pokemons have fainted in each team
+        fainted_mon_team = len([mon for mon in battle.team.values() if mon.fainted]) / 6
+        fainted_mon_opponent = (
+            len([mon for mon in battle.opponent_team.values() if mon.fainted]) / 6
+        )
 
-        return final_vector.astype(np.float32)
-    
-    def _get_type_effectiveness(self, battle: AbstractBattle) -> np.ndarray:
-        """Get type effectiveness multipliers for the active Pokemon against opponent types."""
-        # Pokemon types in standard order
-        types = ['normal', 'fire', 'water', 'electric', 'grass', 'ice', 'fighting', 'poison',
-                'ground', 'flying', 'psychic', 'bug', 'rock', 'ghost', 'dragon', 'dark', 'steel', 'fairy']
-        
-        effectiveness = np.ones(18)  # Default 1.0 (neutral effectiveness)
-        
-        if battle.active_pokemon and battle.opponent_active_pokemon:
-            active_mon = battle.active_pokemon
-            opponent_mon = battle.opponent_active_pokemon
-            
-            # Get effectiveness of our active Pokemon's moves against opponent
-            if hasattr(active_mon, 'moves') and opponent_mon.types:
-                for i, type_name in enumerate(types):
-                    # Calculate average effectiveness against opponent's types
-                    total_effectiveness = 0.0
-                    move_count = 0
-                    
-                    for move in active_mon.moves:
-                        if move and hasattr(move, 'type'):
-                            for opp_type in opponent_mon.types:
-                                # This is a simplified effectiveness calculation
-                                # In reality, you'd need the full type chart
-                                if move.type.name.lower() == type_name:
-                                    if opp_type.name.lower() in ['fire', 'water', 'grass']:  # Example
-                                        total_effectiveness += 2.0 if type_name == 'water' and opp_type.name.lower() == 'fire' else 1.0
-                                    else:
-                                        total_effectiveness += 1.0
-                                    move_count += 1
-                    
-                    if move_count > 0:
-                        effectiveness[i] = total_effectiveness / move_count
-        
-        return effectiveness
+        # Final vector with 10 components
+        final_vector = np.concatenate(
+            [
+                moves_base_power,
+                moves_dmg_multiplier,
+                [fainted_mon_team, fainted_mon_opponent],
+            ]
+        )
+        return np.float32(final_vector)
 
 
 ########################################
