@@ -77,7 +77,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
         
         Total: 20 actions (reduced from original 26 by removing 6 switch actions)
         """
-        return 20  # Only attacking moves allowed
+        return 10  # Only attacking moves allowed
 
     def process_action(self, action: np.int64) -> np.int64:
         """
@@ -100,32 +100,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
         :return: The battle order ID for the given action in context of the current battle.
         :rtype: np.Int64
         """
-        # Check if current Pokemon is fainted and we need to make a forced switch
-        if hasattr(self, 'battle1') and self.battle1 is not None:
-            battle = self.battle1
-            
-            # If Pokemon is fainted, force a switch (return -2 for default switch)
-            if (battle.active_pokemon is None or 
-                (hasattr(battle.active_pokemon, 'fainted') and battle.active_pokemon.fainted) or
-                (hasattr(battle.active_pokemon, 'current_hp') and battle.active_pokemon.current_hp == 0)):
-                return -2  # Default action for forced switch
-            
-            # Otherwise, only allow attacking moves
-            # Map actions to move indices (6-9 in original mapping become 0-3 here)
-            if 0 <= action <= 3:  # Regular moves
-                return action + 6  # Convert to original move indices (6-9)
-            elif 4 <= action <= 7:  # Mega evolve moves
-                return action + 6  # Convert to original indices (10-13)
-            elif 8 <= action <= 11:  # Z-moves
-                return action + 6  # Convert to original indices (14-17)
-            elif 12 <= action <= 15:  # Dynamax moves
-                return action + 6  # Convert to original indices (18-21)
-            elif 16 <= action <= 19:  # Terastallize moves
-                return action + 6  # Convert to original indices (22-25)
-            else:
-                # Default to first available move if action is out of range
-                return 6
-        
+
         return action
 
     def get_additional_info(self) -> Dict[str, Dict[str, Any]]:
@@ -164,7 +139,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
             float: The calculated reward
         """
         return self.reward_computing_helper(
-            battle, fainted_value=2.0, hp_value=1.0, victory_value=30.0
+            battle, fainted_value=2.0, hp_value=1.0, victory_value=15.0
         )
 
     def _observation_size(self) -> int:
