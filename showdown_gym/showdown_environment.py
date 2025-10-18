@@ -139,7 +139,7 @@ class ShowdownEnvironment(BaseShowdownEnv):
             float: The calculated reward
         """
         return self.reward_computing_helper(
-            battle, fainted_value=1.0, hp_value=3.0, victory_value=40.0
+            battle, fainted_value=4, hp_value=1, victory_value=20
         )
 
     def _observation_size(self) -> int:
